@@ -1,0 +1,18 @@
+[project]
+name = "bit-capital-challenge"
+version = "0.1.0"
+description = "Polymarket market sync and pipeline"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "httpx>=0.27.0",
+    "supabase>=2.0.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = []
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
