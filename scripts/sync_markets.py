@@ -27,6 +27,8 @@ GAMMA_BASE = "https://gamma-api.polymarket.com"
 PAGE_LIMIT = 100
 DELAY_BETWEEN_PAGES_S = 0.5
 MIN_VOLUME = 1000
+MAX_RETRIES = 3
+RETRY_BACKOFF_BASE_S = 2
 
 
 def parse_ts(value: Any) -> str | None:
@@ -68,11 +70,33 @@ def market_row(m: dict[str, Any], event_id: str, run_ts: str) -> dict[str, Any] 
     }
 
 
+def fetch_with_retry(client: httpx.Client, url: str, params: dict) -> httpx.Response:
+    for attempt in range(1, MAX_RETRIES + 1):
+        try:
+            resp = client.get(url, params=params)
+            if resp.status_code == 429 or resp.status_code >= 500:
+                raise httpx.HTTPStatusError(
+                    f"{resp.status_code}", request=resp.request, response=resp,
+                )
+            resp.raise_for_status()
+            return resp
+        except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.TransportError) as e:
+            if attempt == MAX_RETRIES:
+                raise
+            wait = RETRY_BACKOFF_BASE_S ** attempt
+            logger.warning(
+                "Attempt %d/%d failed (%s), retrying in %ds...",
+                attempt, MAX_RETRIES, e, wait,
+            )
+            time.sleep(wait)
+
+
 def paginate_events(client: httpx.Client) -> list[dict[str, Any]]:
     all_events: list[dict[str, Any]] = []
     offset = 0
     while True:
-        resp = client.get(
+        resp = fetch_with_retry(
+            client,
             f"{GAMMA_BASE}/events",
             params={
                 "closed": "false",
@@ -82,7 +106,6 @@ def paginate_events(client: httpx.Client) -> list[dict[str, Any]]:
                 "offset": offset,
             },
         )
-        resp.raise_for_status()
         data = resp.json()
         if not isinstance(data, list) or len(data) == 0:
             break
@@ -122,24 +145,13 @@ def main() -> None:
     logger.info("Sync run id=%s  run_ts=%s", run_id, run_ts)
 
     try:
-        # Load existing IDs so we can count inserts vs updates
-        existing_event_ids: set[str] = set()
-        resp = supabase.table("polymarket_events").select("id").execute()
-        if resp.data:
-            existing_event_ids = {r["id"] for r in resp.data}
-
-        existing_market_ids: set[str] = set()
-        resp = supabase.table("polymarket_markets").select("id").execute()
-        if resp.data:
-            existing_market_ids = {r["id"] for r in resp.data}
-
-        # Fetch from Gamma
         with httpx.Client(timeout=30.0) as client:
             all_events = paginate_events(client)
 
-        logger.info("Total events fetched: %d", len(all_events))
+        events_fetched = len(all_events)
+        markets_fetched = sum(len(ev.get("markets") or []) for ev in all_events)
+        logger.info("Fetched: %d events, %d markets", events_fetched, markets_fetched)
 
-        # Build rows
         ev_rows: list[dict[str, Any]] = []
         mk_rows: list[dict[str, Any]] = []
         for ev in all_events:
@@ -150,18 +162,10 @@ def main() -> None:
                 if mr:
                     mk_rows.append(mr)
 
-        # Count inserts vs updates
-        events_inserted = sum(1 for r in ev_rows if r["id"] not in existing_event_ids)
-        events_updated = len(ev_rows) - events_inserted
-        markets_inserted = sum(1 for r in mk_rows if r["id"] not in existing_market_ids)
-        markets_updated = len(mk_rows) - markets_inserted
+        events_upserted = len(ev_rows)
+        markets_upserted = len(mk_rows)
+        logger.info("To upsert: %d events, %d markets", events_upserted, markets_upserted)
 
-        logger.info(
-            "Events: %d inserted, %d updated | Markets: %d inserted, %d updated",
-            events_inserted, events_updated, markets_inserted, markets_updated,
-        )
-
-        # Upsert events first (markets FK depends on them)
         if ev_rows:
             upsert_chunks(supabase, "polymarket_events", ev_rows)
         if mk_rows:
@@ -194,11 +198,11 @@ def main() -> None:
             {
                 "run_status": "success",
                 "finished_at": datetime.now(tz=timezone.utc).isoformat(),
-                "events_inserted": events_inserted,
-                "events_updated": events_updated,
-                "markets_inserted": markets_inserted,
-                "markets_updated": markets_updated,
+                "events_fetched": events_fetched,
+                "events_upserted": events_upserted,
                 "events_deactivated": events_deactivated,
+                "markets_fetched": markets_fetched,
+                "markets_upserted": markets_upserted,
                 "markets_deactivated": markets_deactivated,
                 "error": None,
             }

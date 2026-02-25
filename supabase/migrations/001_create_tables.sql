@@ -24,12 +24,16 @@ CREATE INDEX idx_polymarket_markets_volume_num ON polymarket_markets (volume_num
 -- Sync run observability
 CREATE TABLE sync_runs (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  started_at timestamptz NOT NULL DEFAULT now(),
-  finished_at timestamptz,
   run_status text NOT NULL DEFAULT 'running',
   markets_fetched integer NOT NULL DEFAULT 0,
   markets_upserted integer NOT NULL DEFAULT 0,
-  error text
+  markets_deactivated integer NOT NULL DEFAULT 0,
+  events_fetched integer NOT NULL DEFAULT 0,
+  events_upserted integer NOT NULL DEFAULT 0,
+  events_deactivated integer NOT NULL DEFAULT 0,
+  error text,
+  started_at timestamptz NOT NULL DEFAULT now(),
+  finished_at timestamptz
 );
 
 CREATE INDEX idx_sync_runs_started_at ON sync_runs (started_at);

@@ -33,10 +33,4 @@ CREATE INDEX idx_polymarket_markets_event_id ON polymarket_markets (event_id);
 CREATE INDEX idx_polymarket_markets_active ON polymarket_markets (active);
 CREATE INDEX idx_polymarket_markets_updated_at ON polymarket_markets (updated_at);
 
--- Expand sync_runs with granular insert/update/deactivate counts
-ALTER TABLE sync_runs ADD COLUMN events_inserted INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sync_runs ADD COLUMN events_updated INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sync_runs ADD COLUMN markets_inserted INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sync_runs ADD COLUMN markets_updated INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sync_runs ADD COLUMN events_deactivated INTEGER NOT NULL DEFAULT 0;
-ALTER TABLE sync_runs ADD COLUMN markets_deactivated INTEGER NOT NULL DEFAULT 0;
+-- sync_runs columns already defined in 001; no alterations needed here.
