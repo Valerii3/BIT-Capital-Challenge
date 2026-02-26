@@ -44,6 +44,7 @@ const defaultFilters: Filters = {
   prefilterPassed: null,
   impactTypes: [],
   themeLabels: [],
+  sort: "recent",
 };
 
 export default function EventsPage() {
@@ -56,13 +57,16 @@ export default function EventsPage() {
   const fetchEvents = useCallback(async () => {
     setLoading(true);
 
+    const sortColumn = filters.sort.startsWith("volume") ? "volume" : "updated_at";
+    const sortAsc = filters.sort === "volume_asc";
+
     let query = supabase
       .from("polymarket_events")
       .select(
         `*, event_filtering(*), polymarket_markets(id, question, outcomes, outcome_prices, volume_num)`,
         { count: "exact" }
       )
-      .order("updated_at", { ascending: false })
+      .order(sortColumn, { ascending: sortAsc })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
     if (filters.search) {
@@ -109,6 +113,15 @@ export default function EventsPage() {
       rows = rows.filter((e) => {
         const labels = e.event_filtering?.theme_labels ?? [];
         return filters.themeLabels.some((l) => labels.includes(l));
+      });
+    }
+
+    if (filters.sort === "score_desc" || filters.sort === "score_asc") {
+      const asc = filters.sort === "score_asc";
+      rows.sort((a, b) => {
+        const sa = a.event_filtering?.relevance_score ?? -1;
+        const sb = b.event_filtering?.relevance_score ?? -1;
+        return asc ? sa - sb : sb - sa;
       });
     }
 

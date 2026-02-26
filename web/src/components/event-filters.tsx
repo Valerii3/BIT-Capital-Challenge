@@ -2,13 +2,29 @@
 
 import { useState } from "react";
 
+export type SortOption =
+  | "recent"
+  | "volume_desc"
+  | "volume_asc"
+  | "score_desc"
+  | "score_asc";
+
 export interface Filters {
   search: string;
   active: boolean | null;
   prefilterPassed: boolean | null;
   impactTypes: string[];
   themeLabels: string[];
+  sort: SortOption;
 }
+
+const SORT_OPTIONS: { value: SortOption; label: string }[] = [
+  { value: "recent", label: "Most recent" },
+  { value: "volume_desc", label: "Volume: high → low" },
+  { value: "volume_asc", label: "Volume: low → high" },
+  { value: "score_desc", label: "Score: high → low" },
+  { value: "score_asc", label: "Score: low → high" },
+];
 
 const IMPACT_OPTIONS = [
   { value: "macro", label: "Macro" },
@@ -54,6 +70,28 @@ export function EventFilters({ filters, onChange }: Props) {
           onChange={(e) => onChange({ ...filters, search: e.target.value })}
           className="h-10 flex-1 rounded-lg border border-border bg-white px-4 text-sm outline-none placeholder:text-muted focus:border-accent focus:ring-1 focus:ring-accent"
         />
+        <select
+          value={filters.sort}
+          onChange={(e) =>
+            onChange({ ...filters, sort: e.target.value as SortOption })
+          }
+          className={`h-10 appearance-none rounded-lg border bg-white px-3 pr-8 text-sm font-medium outline-none transition-colors ${
+            filters.sort !== "recent"
+              ? "border-accent text-accent"
+              : "border-border text-foreground"
+          }`}
+          style={{
+            backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16' fill='%236b7280'%3E%3Cpath fill-rule='evenodd' d='M4.22 6.22a.75.75 0 0 1 1.06 0L8 8.94l2.72-2.72a.75.75 0 1 1 1.06 1.06l-3.25 3.25a.75.75 0 0 1-1.06 0L4.22 7.28a.75.75 0 0 1 0-1.06Z' clip-rule='evenodd'/%3E%3C/svg%3E")`,
+            backgroundRepeat: "no-repeat",
+            backgroundPosition: "right 0.5rem center",
+          }}
+        >
+          {SORT_OPTIONS.map((opt) => (
+            <option key={opt.value} value={opt.value}>
+              {opt.label}
+            </option>
+          ))}
+        </select>
         <button
           onClick={() => setOpen((o) => !o)}
           className={`relative h-10 rounded-lg border px-4 text-sm font-medium transition-colors ${
@@ -136,6 +174,7 @@ export function EventFilters({ filters, onChange }: Props) {
                   prefilterPassed: null,
                   impactTypes: [],
                   themeLabels: [],
+                  sort: filters.sort,
                 })
               }
               className="mt-4 text-sm text-accent hover:underline"
