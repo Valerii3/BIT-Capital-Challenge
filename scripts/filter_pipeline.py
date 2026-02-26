@@ -4,6 +4,7 @@ prefilter-passing events, and persist to event_filtering table.
 """
 import ast
 import json
+import logging
 import os
 import random
 import re
@@ -15,6 +16,16 @@ from google.genai import types
 from supabase import create_client
 
 load_dotenv()
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger(__name__)
+
+MAX_RETRIES = 6
+RETRY_BACKOFF_BASE_S = 2
 
 BLOCKLIST_TAGS = {
     'sports', 'soccer', 'basketball', 'ncaa', 'ncaa basketball',
@@ -112,31 +123,36 @@ def regex_filter(title):
     return 'keep'
 
 
+_ERROR_RESULT = {
+    "theme_labels": [],
+    "relevance_score": 0.0,
+    "confidence": 0.0,
+    "impact_type": "non_equity",
+    "relevant": False,
+}
+
+
 def classify_one(
     title: str,
     description: str = "",
     tags: str = "",
     volume: float = 0.0,
-    model: str = "gemini-2.5-flash-lite",
-    max_retries: int = 6,
+    model: str = "gemini-2.5-flash",
 ):
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
-        return {
-            "theme_labels": [],
-            "relevance_score": 0.0,
-            "confidence": 0.0,
-            "impact_type": "non_equity",
-            "relevant": False,
-            "reasoning": "error: GEMINI_API_KEY not set",
-        }
+        logger.error("GEMINI_API_KEY / GOOGLE_API_KEY not set")
+        return {**_ERROR_RESULT, "reasoning": "error: GEMINI_API_KEY not set"}
+
     client = genai.Client(api_key=api_key)
     user_prompt = f"""Event title: {title}
 Event description: {description}
 Tags: {tags}
 Volume: ${volume:,.0f}"""
-    for attempt in range(max_retries):
+
+    for attempt in range(1, MAX_RETRIES + 1):
         try:
+            logger.info("Gemini call attempt %d/%d for '%s'", attempt, MAX_RETRIES, title[:80])
             resp = client.models.generate_content(
                 model=model,
                 contents=user_prompt,
@@ -153,36 +169,30 @@ Volume: ${volume:,.0f}"""
         except Exception as e:
             msg = str(e)
             if "429" in msg or "RESOURCE_EXHAUSTED" in msg:
-                sleep_s = min(2 ** attempt, 32) + random.random()
-                time.sleep(sleep_s)
+                wait = min(RETRY_BACKOFF_BASE_S ** attempt, 32) + random.random()
+                logger.warning(
+                    "Attempt %d/%d rate-limited (%s), retrying in %.1fs...",
+                    attempt, MAX_RETRIES, msg[:80], wait,
+                )
+                time.sleep(wait)
                 continue
-            return {
-                "theme_labels": [],
-                "relevance_score": 0.0,
-                "confidence": 0.0,
-                "impact_type": "non_equity",
-                "relevant": False,
-                "reasoning": f"error: {msg[:160]}",
-            }
-    return {
-        "theme_labels": [],
-        "relevance_score": 0.0,
-        "confidence": 0.0,
-        "impact_type": "non_equity",
-        "relevant": False,
-        "reasoning": "rate-limited: retries exhausted",
-    }
+            logger.error("Attempt %d/%d non-retryable error: %s", attempt, MAX_RETRIES, msg[:160])
+            return {**_ERROR_RESULT, "reasoning": f"error: {msg[:160]}"}
+
+    logger.error("All %d retries exhausted for '%s'", MAX_RETRIES, title[:80])
+    return {**_ERROR_RESULT, "reasoning": "rate-limited: retries exhausted"}
 
 
 def main() -> None:
     url = os.environ.get("SUPABASE_URL")
     key = os.environ.get("SUPABASE_SERVICE_ROLE_KEY")
     if not url or not key:
-        print("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
+        logger.error("Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY")
         raise SystemExit(1)
 
     supabase = create_client(url, key)
 
+    logger.info("Fetching active events from polymarket_events...")
     events_resp = (
         supabase.table("polymarket_events")
         .select("*")
@@ -191,18 +201,23 @@ def main() -> None:
         .execute()
     )
     events = events_resp.data or []
+    logger.info("Fetched %d active events", len(events))
 
     existing_resp = supabase.table("event_filtering").select("event_id").execute()
     existing_ids = {r["event_id"] for r in (existing_resp.data or [])}
+    logger.info("Already classified: %d events", len(existing_ids))
 
     inserted = 0
     llm_run = 0
     relevant_count = 0
+    new_events = [
+        ev for ev in events
+        if str(ev.get("id", "")) and str(ev.get("id", "")) not in existing_ids
+    ]
+    logger.info("New events to process: %d", len(new_events))
 
-    for ev in events:
-        event_id = str(ev.get("id", ""))
-        if not event_id or event_id in existing_ids:
-            continue
+    for ev in new_events:
+        event_id = str(ev["id"])
 
         tags = parse_tags(ev.get("tags"))
         tag_decision = check_tags(tags)
@@ -227,8 +242,14 @@ def main() -> None:
                 volume=float(ev.get("volume") or 0.0),
             )
             llm_run += 1
-            if out.get("relevant"):
+            is_relevant = out.get("relevant", False)
+            if is_relevant:
                 relevant_count += 1
+            logger.info(
+                "Classified '%s': relevant=%s score=%.2f impact=%s",
+                title[:60], is_relevant,
+                out.get("relevance_score", 0.0), out.get("impact_type", "?"),
+            )
             supabase.table("event_filtering").update(
                 {
                     "relevant": out.get("relevant"),
@@ -240,9 +261,7 @@ def main() -> None:
                 }
             ).eq("event_id", event_id).execute()
 
-    print(f"Inserted: {inserted} rows")
-    print(f"LLM runs: {llm_run}")
-    print(f"Relevant: {relevant_count}")
+    logger.info("Done — inserted=%d  llm_runs=%d  relevant=%d", inserted, llm_run, relevant_count)
 
 
 if __name__ == "__main__":

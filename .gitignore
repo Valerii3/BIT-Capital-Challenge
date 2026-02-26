@@ -42,3 +42,9 @@ Thumbs.db
 
 # Supabase local
 .supabase/
+
+# Next.js
+web/.next/
+web/node_modules/
+web/.env
+web/.env.local
