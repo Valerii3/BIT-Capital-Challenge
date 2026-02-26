@@ -39,6 +39,11 @@ def parse_ts(value: Any) -> str | None:
     return None
 
 
+def extract_tags(ev: dict[str, Any]) -> list[str]:
+    raw = ev.get("tags") or []
+    return [t["label"] for t in raw if isinstance(t, dict) and t.get("label")]
+
+
 def event_row(ev: dict[str, Any], run_ts: str) -> dict[str, Any]:
     return {
         "id": str(ev["id"]),
@@ -49,6 +54,7 @@ def event_row(ev: dict[str, Any], run_ts: str) -> dict[str, Any]:
         "active": True,
         "liquidity": ev.get("liquidity"),
         "volume": ev.get("volume"),
+        "tags": extract_tags(ev),
         "updated_at": run_ts,
     }
 
