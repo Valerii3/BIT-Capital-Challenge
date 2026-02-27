@@ -4,6 +4,8 @@ Prediction-market intelligence app for equities. It ingests Polymarket events, f
 
 Try it out: [https://bit-capital-challenge.vercel.app/events](https://bit-capital-challenge.vercel.app/events)
 
+[Demo](https://drive.google.com/file/d/1fnOa8eoEQmMgThiAyB4fZPwh3uzpzDsC/view?usp=drive_link)
+
 ## Project Structure
 
 - `backend/` FastAPI API and report generation orchestration.
