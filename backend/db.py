@@ -2,7 +2,7 @@ from functools import lru_cache
 
 from supabase import Client, create_client
 
-from .config import get_required_env
+from config import get_required_env
 
 
 @lru_cache(maxsize=1)

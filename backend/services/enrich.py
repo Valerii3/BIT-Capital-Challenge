@@ -8,7 +8,7 @@ from google import genai
 from google.genai import types
 from supabase import Client
 
-from scripts.assign_event_stocks import classify_with_llm, match_single_stock
+from services.matching import classify_with_llm, match_single_stock
 
 MAX_RETRIES = 4
 RETRY_BACKOFF_BASE_S = 2

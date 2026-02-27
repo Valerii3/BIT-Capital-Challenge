@@ -1,8 +1,8 @@
 import argparse
 
-from backend.services.filter import run_filter
-from backend.services.ingest import run_ingest
-from backend.services.mapping import run_mapping
+from services.filter import run_filter
+from services.ingest import run_ingest
+from services.mapping import run_mapping
 
 
 def main() -> None:

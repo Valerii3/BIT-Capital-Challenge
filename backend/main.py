@@ -1,21 +1,20 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from .config import get_backend_cors_origins
-from .db import get_supabase
-from .services.enrich import enrich_stock
-from .services.events import SortOption, list_events
-from .services.filter import run_filter
-from .services.ingest import run_ingest
-from .services.mapping import run_mapping
-from .services.report import generate_signal_report
-from .services.stocks import create_stock, delete_stock, get_stock, list_stocks
+from config import get_backend_cors_origins
+from db import get_supabase
+from services.enrich import enrich_stock
+from services.events import SortOption, list_events
+from services.filter import run_filter
+from services.ingest import run_ingest
+from services.mapping import run_mapping
+from services.report import generate_signal_report
+from services.stocks import create_stock, delete_stock, get_stock, list_stocks
 
 app = FastAPI(title="BIT Capital Backend", version="0.1.0")
 
@@ -30,13 +29,6 @@ app.add_middleware(
 
 class CreateStockRequest(BaseModel):
     name: str = Field(min_length=1)
-
-
-@dataclass
-class PipelineRunResult:
-    ingest: bool
-    filter: bool
-    mapping: bool
 
 
 class PipelineRunRequest(BaseModel):

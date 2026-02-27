@@ -24,13 +24,14 @@ FastAPI service that owns all DB access and pipeline execution.
 ```bash
 cd /Users/Valerii.Ovchinnikov/Documents/repo/BIT-Capital-Challenge
 pip install -r backend/requirements.txt
-uvicorn backend.main:app --reload --host 0.0.0.0 --port 8000
+cd backend
+uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### Scheduled pipeline command
 
 ```bash
-python -m backend.run_pipeline
+python -m run_pipeline
 ```
 
-Use Railway Scheduler to run the command on your cron interval.
+`/pipeline/run` and `run_pipeline` call scripts from `scripts/`. Keep Railway root directory at repo root if you need those scripts available in the container.
