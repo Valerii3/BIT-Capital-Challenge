@@ -16,7 +16,25 @@ from services.mapping import run_mapping
 from services.report import generate_signal_report
 from services.stocks import create_stock, delete_stock, get_stock, list_stocks
 
-app = FastAPI(title="BIT Capital Backend", version="0.1.0")
+import logging
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+
+logger = logging.getLogger(__name__)
+scheduler = AsyncIOScheduler()
+
+def test_job():
+    logger.info("🔔 Hello from cron! It works!")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    scheduler.add_job(test_job, "interval", seconds=30)
+    scheduler.start()
+    logger.info("Scheduler started — test job every 30s")
+    yield
+    scheduler.shutdown()
+
+app = FastAPI(title="BIT Capital Backend", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
