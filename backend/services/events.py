@@ -24,9 +24,55 @@ def list_events(
             supabase.table("event_stock_mappings")
             .select("event_id")
             .in_("stock_id", stock_ids)
+            .eq("affects", True)
             .execute()
         )
         event_ids = list({row["event_id"] for row in (mappings_resp.data or []) if row.get("event_id")})
+        if not event_ids:
+            return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    if prefilter_passed is not None:
+        ef_resp = (
+            supabase.table("event_filtering")
+            .select("event_id")
+            .eq("prefilter_passed", prefilter_passed)
+            .execute()
+        )
+        ef_ids = [row["event_id"] for row in (ef_resp.data or [])]
+        if event_ids is not None:
+            event_ids = list(set(event_ids) & set(ef_ids))
+        else:
+            event_ids = ef_ids
+        if not event_ids:
+            return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    if impact_types:
+        ef_resp = (
+            supabase.table("event_filtering")
+            .select("event_id")
+            .in_("impact_type", impact_types)
+            .execute()
+        )
+        ef_ids = [row["event_id"] for row in (ef_resp.data or [])]
+        if event_ids is not None:
+            event_ids = list(set(event_ids) & set(ef_ids))
+        else:
+            event_ids = ef_ids
+        if not event_ids:
+            return {"items": [], "total": 0, "page": page, "page_size": page_size}
+
+    if theme_labels:
+        ef_resp = (
+            supabase.table("event_filtering")
+            .select("event_id")
+            .contains("theme_labels", theme_labels)
+            .execute()
+        )
+        ef_ids = [row["event_id"] for row in (ef_resp.data or [])]
+        if event_ids is not None:
+            event_ids = list(set(event_ids) & set(ef_ids))
+        else:
+            event_ids = ef_ids
         if not event_ids:
             return {"items": [], "total": 0, "page": page, "page_size": page_size}
 
@@ -46,12 +92,6 @@ def list_events(
         base_query = base_query.ilike("title", f"%{search}%")
     if active is not None:
         base_query = base_query.eq("active", active)
-    if prefilter_passed is not None:
-        base_query = base_query.eq("event_filtering.prefilter_passed", prefilter_passed)
-    if impact_types:
-        base_query = base_query.in_("event_filtering.impact_type", impact_types)
-    if theme_labels:
-        base_query = base_query.contains("event_filtering.theme_labels", theme_labels)
 
     if sort in ("score_desc", "score_asc"):
         resp = base_query.execute()

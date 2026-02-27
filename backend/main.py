@@ -87,14 +87,14 @@ def remove_stock(stock_id: str) -> Dict[str, str]:
 
 
 @app.post("/stocks/{stock_id}/enrich")
-def post_enrich_stock(stock_id: str) -> Dict[str, Any]:
+async def post_enrich_stock(stock_id: str) -> Dict[str, Any]:
     supabase = get_supabase()
     existing = get_stock(supabase, stock_id)
     if not existing:
         raise HTTPException(status_code=404, detail="Stock not found")
 
     try:
-        return enrich_stock(supabase, stock_id)
+        return await enrich_stock(supabase, stock_id)
     except Exception as err:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(err)) from err
 

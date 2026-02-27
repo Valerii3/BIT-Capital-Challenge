@@ -211,17 +211,18 @@ def main() -> None:
                 else:
                     continue
 
+                if not args.dry_run:
+                    supabase.table("event_stock_mappings").upsert(
+                        {
+                            "event_id": eid,
+                            "stock_id": stock_id,
+                            "affects": matches,
+                            "reasoning": reasoning,
+                            "relevance_score": 0.8 if matches else None,
+                        },
+                        on_conflict="event_id,stock_id",
+                    ).execute()
                 if matches:
-                    if not args.dry_run:
-                        supabase.table("event_stock_mappings").upsert(
-                            {
-                                "event_id": eid,
-                                "stock_id": stock_id,
-                                "reasoning": reasoning,
-                                "relevance_score": 0.8,
-                            },
-                            on_conflict="event_id,stock_id",
-                        ).execute()
                     inserted += 1
                     logger.info("Matched %s -> %s (%s): %s", stock_name, title[:50], it, reasoning[:80])
 

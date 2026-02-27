@@ -149,7 +149,17 @@ export async function POST(
       .eq("relevant", true)
       .in("impact_type", stockInfo.impact_types);
 
-    const candidateEvents = efRows || [];
+    const rawCandidates = efRows || [];
+
+    // Skip already-processed candidates (have non-null affects)
+    const { data: existingRows } = await supabase
+      .from("event_stock_mappings")
+      .select("event_id")
+      .eq("stock_id", id)
+      .not("affects", "is", null);
+
+    const doneEventIds = new Set((existingRows || []).map((r) => r.event_id));
+    const candidateEvents = rawCandidates.filter((c) => !doneEventIds.has(c.event_id as string));
     const total = candidateEvents.length;
 
     await supabase
@@ -208,17 +218,16 @@ export async function POST(
         reasoning = result.reasoning;
       }
 
-      if (shouldInsert) {
-        await supabase.from("event_stock_mappings").upsert(
-          {
-            event_id: eventId,
-            stock_id: id,
-            reasoning,
-            relevance_score: 0.8,
-          },
-          { onConflict: "event_id,stock_id" }
-        );
-      }
+      await supabase.from("event_stock_mappings").upsert(
+        {
+          event_id: eventId,
+          stock_id: id,
+          affects: shouldInsert,
+          reasoning,
+          relevance_score: shouldInsert ? 0.8 : null,
+        },
+        { onConflict: "event_id,stock_id" }
+      );
 
       processed++;
       if (processed % 5 === 0 || processed === total) {

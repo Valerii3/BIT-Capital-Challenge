@@ -24,13 +24,12 @@ def create_stock(supabase: Client, name: str) -> Dict[str, Any]:
                 "enrich_progress": {"step": "description"},
             }
         )
-        .select("*")
-        .single()
         .execute()
     )
     if not resp.data:
         raise RuntimeError("Failed to create stock")
-    return resp.data
+    # Insert returns a list; we inserted one row
+    return resp.data[0]
 
 
 def delete_stock(supabase: Client, stock_id: str) -> None:
