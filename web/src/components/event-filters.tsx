@@ -15,7 +15,6 @@ export interface Filters {
   active: boolean | null;
   prefilterPassed: boolean | null;
   impactTypes: string[];
-  themeLabels: string[];
   stockIds: string[];
   sort: SortOption;
 }
@@ -42,18 +41,6 @@ const IMPACT_OPTIONS = [
   { value: "non_equity", label: "Non-Equity" },
 ];
 
-const THEME_OPTIONS = [
-  { value: "rates_fed", label: "Rates / Fed" },
-  { value: "trade_tariffs", label: "Trade / Tariffs" },
-  { value: "ai_capex", label: "AI Capex" },
-  { value: "dc_power", label: "Datacenters / Power" },
-  { value: "semis_supply", label: "Semis Supply" },
-  { value: "crypto_reg", label: "Crypto Regulation" },
-  { value: "crypto_equity", label: "Crypto Equity" },
-  { value: "geopolitics", label: "Geopolitics" },
-  { value: "health", label: "Health / Biotech" },
-];
-
 interface Props {
   filters: Filters;
   onChange: (f: Filters) => void;
@@ -66,7 +53,6 @@ export function EventFilters({ filters, onChange }: Props) {
     (filters.active !== null ? 1 : 0) +
     (filters.prefilterPassed !== null ? 1 : 0) +
     filters.impactTypes.length +
-    filters.themeLabels.length +
     filters.stockIds.length;
 
   return (
@@ -120,7 +106,7 @@ export function EventFilters({ filters, onChange }: Props) {
 
       {open && (
         <div className="mt-3 rounded-lg border border-border bg-white p-5">
-          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
             <FilterSection title="Status">
               <TriToggle
                 label="Active"
@@ -155,25 +141,7 @@ export function EventFilters({ filters, onChange }: Props) {
               ))}
             </FilterSection>
 
-            <FilterSection title="Themes">
-              {THEME_OPTIONS.map((opt) => (
-                <Checkbox
-                  key={opt.value}
-                  label={opt.label}
-                  checked={filters.themeLabels.includes(opt.value)}
-                  onChange={(checked) =>
-                    onChange({
-                      ...filters,
-                      themeLabels: checked
-                        ? [...filters.themeLabels, opt.value]
-                        : filters.themeLabels.filter((v) => v !== opt.value),
-                    })
-                  }
-                />
-              ))}
-            </FilterSection>
-
-            <FilterSection title="Stock" className="sm:col-span-2">
+            <FilterSection title="Stock" className="sm:col-span-2 lg:col-span-1">
               <StockFilter
                 selectedIds={filters.stockIds}
                 onSelect={(ids) => onChange({ ...filters, stockIds: ids })}
@@ -189,7 +157,6 @@ export function EventFilters({ filters, onChange }: Props) {
                   active: null,
                   prefilterPassed: null,
                   impactTypes: [],
-                  themeLabels: [],
                   stockIds: [],
                   sort: filters.sort,
                 })

@@ -50,7 +50,6 @@ const defaultFilters: Filters = {
   active: null,
   prefilterPassed: null,
   impactTypes: [],
-  themeLabels: [],
   stockIds: [],
   sort: "recent",
 };
@@ -81,9 +80,6 @@ export default function EventsPage() {
       }
       if (filters.impactTypes.length > 0) {
         params.set("impact_types", filters.impactTypes.join(","));
-      }
-      if (filters.themeLabels.length > 0) {
-        params.set("theme_labels", filters.themeLabels.join(","));
       }
       if (filters.stockIds.length > 0) {
         params.set("stock_ids", filters.stockIds.join(","));

@@ -12,7 +12,6 @@ def list_events(
     active: Optional[bool],
     prefilter_passed: Optional[bool],
     impact_types: List[str],
-    theme_labels: List[str],
     stock_ids: List[str],
     sort: SortOption,
     page: int,
@@ -51,21 +50,6 @@ def list_events(
             supabase.table("event_filtering")
             .select("event_id")
             .in_("impact_type", impact_types)
-            .execute()
-        )
-        ef_ids = [row["event_id"] for row in (ef_resp.data or [])]
-        if event_ids is not None:
-            event_ids = list(set(event_ids) & set(ef_ids))
-        else:
-            event_ids = ef_ids
-        if not event_ids:
-            return {"items": [], "total": 0, "page": page, "page_size": page_size}
-
-    if theme_labels:
-        ef_resp = (
-            supabase.table("event_filtering")
-            .select("event_id")
-            .contains("theme_labels", theme_labels)
             .execute()
         )
         ef_ids = [row["event_id"] for row in (ef_resp.data or [])]
