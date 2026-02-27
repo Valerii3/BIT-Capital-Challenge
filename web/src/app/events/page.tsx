@@ -44,6 +44,7 @@ const defaultFilters: Filters = {
   prefilterPassed: null,
   impactTypes: [],
   themeLabels: [],
+  stockIds: [],
   sort: "recent",
 };
 
@@ -60,6 +61,21 @@ export default function EventsPage() {
     const sortColumn = filters.sort.startsWith("volume") ? "volume" : "updated_at";
     const sortAsc = filters.sort === "volume_asc";
 
+    let eventIds: string[] | null = null;
+    if (filters.stockIds.length > 0) {
+      const { data: mappings } = await supabase
+        .from("event_stock_mappings")
+        .select("event_id")
+        .in("stock_id", filters.stockIds);
+      eventIds = [...new Set((mappings ?? []).map((m) => m.event_id))];
+      if (eventIds.length === 0) {
+        setEvents([]);
+        setTotal(0);
+        setLoading(false);
+        return;
+      }
+    }
+
     let query = supabase
       .from("polymarket_events")
       .select(
@@ -69,6 +85,9 @@ export default function EventsPage() {
       .order(sortColumn, { ascending: sortAsc })
       .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
 
+    if (eventIds != null) {
+      query = query.in("id", eventIds);
+    }
     if (filters.search) {
       query = query.ilike("title", `%${filters.search}%`);
     }

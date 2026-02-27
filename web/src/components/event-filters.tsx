@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 export type SortOption =
   | "recent"
@@ -15,7 +16,14 @@ export interface Filters {
   prefilterPassed: boolean | null;
   impactTypes: string[];
   themeLabels: string[];
+  stockIds: string[];
   sort: SortOption;
+}
+
+interface Stock {
+  id: string;
+  name: string;
+  ticker: string | null;
 }
 
 const SORT_OPTIONS: { value: SortOption; label: string }[] = [
@@ -58,7 +66,8 @@ export function EventFilters({ filters, onChange }: Props) {
     (filters.active !== null ? 1 : 0) +
     (filters.prefilterPassed !== null ? 1 : 0) +
     filters.impactTypes.length +
-    filters.themeLabels.length;
+    filters.themeLabels.length +
+    filters.stockIds.length;
 
   return (
     <div>
@@ -163,6 +172,13 @@ export function EventFilters({ filters, onChange }: Props) {
                 />
               ))}
             </FilterSection>
+
+            <FilterSection title="Stock" className="sm:col-span-2">
+              <StockFilter
+                selectedIds={filters.stockIds}
+                onSelect={(ids) => onChange({ ...filters, stockIds: ids })}
+              />
+            </FilterSection>
           </div>
 
           {activeCount > 0 && (
@@ -174,6 +190,7 @@ export function EventFilters({ filters, onChange }: Props) {
                   prefilterPassed: null,
                   impactTypes: [],
                   themeLabels: [],
+                  stockIds: [],
                   sort: filters.sort,
                 })
               }
@@ -191,12 +208,14 @@ export function EventFilters({ filters, onChange }: Props) {
 function FilterSection({
   title,
   children,
+  className = "",
 }: {
   title: string;
   children: React.ReactNode;
+  className?: string;
 }) {
   return (
-    <div>
+    <div className={className}>
       <h4 className="mb-2 text-xs font-semibold uppercase tracking-wider text-muted">
         {title}
       </h4>
@@ -257,5 +276,128 @@ function Checkbox({
       />
       {label}
     </label>
+  );
+}
+
+function StockFilter({
+  selectedIds,
+  onSelect,
+}: {
+  selectedIds: string[];
+  onSelect: (ids: string[]) => void;
+}) {
+  const [stocks, setStocks] = useState<Stock[]>([]);
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+
+  const fetchStocks = useCallback(async () => {
+    setLoading(true);
+    const { data } = await supabase
+      .from("stocks")
+      .select("id, name, ticker")
+      .eq("is_active", true)
+      .order("name");
+    setStocks((data ?? []) as Stock[]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    fetchStocks();
+  }, [fetchStocks]);
+
+  const q = query.trim().toLowerCase();
+  const filtered = q
+    ? stocks.filter(
+        (s) =>
+          (s.name || "").toLowerCase().includes(q) ||
+          (s.ticker || "").toLowerCase().includes(q)
+      )
+    : stocks;
+
+  const selectedStocks = stocks.filter((s) => selectedIds.includes(s.id));
+
+  function addStock(stock: Stock) {
+    if (selectedIds.includes(stock.id)) return;
+    onSelect([...selectedIds, stock.id]);
+  }
+
+  function removeStock(id: string) {
+    onSelect(selectedIds.filter((sid) => sid !== id));
+  }
+
+  return (
+    <div className="relative">
+      <div className="flex flex-wrap gap-1.5">
+        {selectedStocks.map((s) => (
+          <span
+            key={s.id}
+            className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-medium text-blue-700"
+          >
+            {s.ticker ? `${s.name} (${s.ticker})` : s.name}
+            <button
+              type="button"
+              onClick={() => removeStock(s.id)}
+              className="rounded-full p-0.5 hover:bg-blue-200"
+              aria-label="Remove"
+            >
+              <svg className="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
+                <path
+                  fillRule="evenodd"
+                  d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z"
+                  clipRule="evenodd"
+                />
+              </svg>
+            </button>
+          </span>
+        ))}
+      </div>
+      <div className="mt-2">
+        <input
+          type="text"
+          placeholder="Type to search stocks..."
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          onFocus={() => setOpen(true)}
+          className="h-9 w-full rounded-lg border border-border bg-white px-3 text-sm outline-none placeholder:text-muted focus:border-accent focus:ring-1 focus:ring-accent"
+        />
+        {open && (
+          <>
+            <div
+              className="fixed inset-0 z-10"
+              onClick={() => setOpen(false)}
+              aria-hidden="true"
+            />
+            <div className="absolute left-0 right-0 top-full z-20 mt-1 max-h-48 overflow-auto rounded-lg border border-border bg-white shadow-lg">
+              {loading ? (
+                <p className="px-3 py-2 text-sm text-muted">Loading...</p>
+              ) : filtered.length === 0 ? (
+                <p className="px-3 py-2 text-sm text-muted">No stocks found</p>
+              ) : (
+                filtered.map((s) => (
+                  <button
+                    key={s.id}
+                    type="button"
+                    onClick={() => {
+                      addStock(s);
+                      setQuery("");
+                      setOpen(false);
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-gray-50 ${
+                      selectedIds.includes(s.id) ? "bg-blue-50 text-blue-700" : ""
+                    }`}
+                  >
+                    <span className="font-medium">{s.name}</span>
+                    {s.ticker && (
+                      <span className="text-xs text-muted">{s.ticker}</span>
+                    )}
+                  </button>
+                ))
+              )}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
