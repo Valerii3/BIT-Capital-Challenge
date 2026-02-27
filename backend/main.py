@@ -14,6 +14,13 @@ from services.filter import run_filter
 from services.ingest import run_ingest
 from services.mapping import run_mapping
 from services.report import generate_signal_report
+from services.reports import (
+    create_report,
+    delete_report,
+    generate_report_content,
+    get_report,
+    list_reports,
+)
 from services.stocks import create_stock, delete_stock, get_stock, list_stocks
 
 import logging
@@ -47,6 +54,11 @@ app.add_middleware(
 
 class CreateStockRequest(BaseModel):
     name: str = Field(min_length=1)
+
+
+class CreateReportRequest(BaseModel):
+    name: str = Field(min_length=1)
+    stock_ids: List[str]
 
 
 class PipelineRunRequest(BaseModel):
@@ -148,3 +160,34 @@ def post_pipeline(payload: PipelineRunRequest) -> Dict[str, Any]:
 @app.post("/reports/generate")
 def post_generate_report() -> Dict[str, Any]:
     return generate_signal_report()
+
+
+@app.get("/reports")
+def get_reports() -> List[Dict[str, Any]]:
+    supabase = get_supabase()
+    return list_reports(supabase)
+
+
+@app.post("/reports")
+def post_report(payload: CreateReportRequest) -> Dict[str, Any]:
+    supabase = get_supabase()
+    return create_report(supabase, payload.name.strip(), payload.stock_ids)
+
+
+@app.delete("/reports/{report_id}")
+def remove_report(report_id: str) -> Dict[str, str]:
+    supabase = get_supabase()
+    delete_report(supabase, report_id)
+    return {"status": "ok"}
+
+
+@app.post("/reports/{report_id}/generate")
+async def post_generate_report_for_id(report_id: str) -> Dict[str, Any]:
+    supabase = get_supabase()
+    existing = get_report(supabase, report_id)
+    if not existing:
+        raise HTTPException(status_code=404, detail="Report not found")
+    try:
+        return await generate_report_content(supabase, report_id)
+    except Exception as err:  # noqa: BLE001
+        raise HTTPException(status_code=500, detail=str(err)) from err
