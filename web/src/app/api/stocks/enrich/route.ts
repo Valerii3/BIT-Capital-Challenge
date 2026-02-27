@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { GoogleGenAI } from "@google/genai";
 import { createServerClient } from "@/lib/supabase-server";
 
 const MAX_RETRIES = 4;
@@ -12,6 +13,8 @@ async function callGemini(companyName: string): Promise<{
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new Error("GEMINI_API_KEY not configured");
 
+  const ai = new GoogleGenAI({ apiKey });
+
   const prompt = `Given the company name "${companyName}", return a JSON object with:
 - "ticker": the stock ticker symbol (e.g. "NVDA")
 - "short_description": 1-2 sentence description of what the company does
@@ -20,38 +23,33 @@ async function callGemini(companyName: string): Promise<{
 Return ONLY valid JSON, no markdown fences.`;
 
   for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{ parts: [{ text: prompt }] }],
-          generationConfig: {
-            temperature: 0,
-            responseMimeType: "application/json",
-          },
-        }),
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: prompt,
+        config: {
+          tools: [{ googleSearch: {} }],
+          temperature: 0,
+          responseMimeType: "application/json",
+        },
+      });
+
+      const text = response.text ?? "";
+      return JSON.parse(text);
+    } catch (err: unknown) {
+      const status =
+        err instanceof Error && "status" in err
+          ? (err as { status: number }).status
+          : 0;
+      const isRetryable = status === 429 || status >= 500;
+
+      if (isRetryable && attempt < MAX_RETRIES) {
+        const wait = RETRY_BACKOFF_BASE_S ** attempt;
+        await new Promise((r) => setTimeout(r, wait * 1000));
+        continue;
       }
-    );
-
-    if (res.status === 429 || res.status >= 500) {
-      if (attempt === MAX_RETRIES) {
-        throw new Error(`Gemini API error ${res.status} after ${MAX_RETRIES} retries`);
-      }
-      const wait = RETRY_BACKOFF_BASE_S ** attempt;
-      await new Promise((r) => setTimeout(r, wait * 1000));
-      continue;
+      throw err;
     }
-
-    if (!res.ok) {
-      throw new Error(`Gemini API error: ${res.status}`);
-    }
-
-    const body = await res.json();
-    const text =
-      body?.candidates?.[0]?.content?.parts?.[0]?.text ?? "";
-    return JSON.parse(text);
   }
 
   throw new Error("Gemini retries exhausted");

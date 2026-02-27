@@ -197,7 +197,6 @@ def main() -> None:
         supabase.table("polymarket_events")
         .select("*")
         .eq("active", True)
-        .limit(500)
         .execute()
     )
     events = events_resp.data or []
