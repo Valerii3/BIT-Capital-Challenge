@@ -8,10 +8,24 @@ import { fetchBackend } from "@/lib/backend-api";
 // ---------------------------------------------------------------------------
 
 type ReportStatus = "pending" | "generating" | "ready" | "failed";
+type ReportType = "single_stock" | "macro" | "sector";
+
+const REPORT_TYPE_LABELS: Record<ReportType, string> = {
+  single_stock: "Single-Stock",
+  macro: "Macro",
+  sector: "Sector",
+};
+
+function normalizeReportType(value: string | null | undefined): ReportType {
+  if (value === "macro") return "macro";
+  if (value === "sector") return "sector";
+  return "single_stock";
+}
 
 interface Report {
   id: string;
   name: string;
+  report_type?: ReportType | null;
   stock_ids: string[];
   event_ids: string[];
   content: string | null;
@@ -300,6 +314,7 @@ function ReportCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const isGenerating = report.status === "generating";
+  const reportType = normalizeReportType(report.report_type);
 
   return (
     <div className="rounded-lg border border-border bg-white p-5 shadow-sm transition-shadow hover:shadow-md">
@@ -309,6 +324,9 @@ function ReportCard({
           <div className="flex flex-wrap items-center gap-2">
             <h3 className="font-semibold text-foreground">{report.name}</h3>
             <StatusBadge status={report.status} />
+            <span className="rounded-full bg-indigo-50 px-2 py-0.5 text-xs font-medium text-indigo-700">
+              {REPORT_TYPE_LABELS[reportType]}
+            </span>
             <span className="text-xs text-muted">{formatDate(report.created_at)}</span>
           </div>
 
@@ -366,7 +384,7 @@ function ReportCard({
       {/* Generating spinner */}
       {isGenerating && (
         <p className="mt-3 text-sm italic text-muted">
-          Analysing markets and generating insights…
+          Analysing markets and generating {REPORT_TYPE_LABELS[reportType].toLowerCase()} report…
         </p>
       )}
 
@@ -419,8 +437,9 @@ export default function ReportsPage() {
 
   const [reportName, setReportName] = useState("");
   const [selectedStockIds, setSelectedStockIds] = useState<string[]>([]);
-  const [creating, setCreating] = useState(false);
+  const [creatingType, setCreatingType] = useState<ReportType | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
+  const creating = creatingType !== null;
 
   // Build a quick lookup map
   const stocksById: Record<string, Stock> = {};
@@ -430,7 +449,12 @@ export default function ReportsPage() {
   const fetchReports = useCallback(async () => {
     try {
       const data = await fetchBackend<Report[]>("/reports");
-      setReports(data ?? []);
+      setReports(
+        (data ?? []).map((report) => ({
+          ...report,
+          report_type: normalizeReportType(report.report_type),
+        }))
+      );
     } catch (err) {
       console.error("Failed to fetch reports:", err);
     } finally {
@@ -462,8 +486,16 @@ export default function ReportsPage() {
     e.preventDefault();
     const trimmed = reportName.trim();
     if (!trimmed || selectedStockIds.length === 0) return;
+    const native = e.nativeEvent as SubmitEvent;
+    const submitter = native.submitter as HTMLButtonElement | null;
+    const reportType: ReportType =
+      submitter?.value === "macro"
+        ? "macro"
+        : submitter?.value === "sector"
+          ? "sector"
+          : "single_stock";
 
-    setCreating(true);
+    setCreatingType(reportType);
     setFormError(null);
 
     try {
@@ -471,12 +503,23 @@ export default function ReportsPage() {
       const created = await fetchBackend<Report>("/reports", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: trimmed, stock_ids: selectedStockIds }),
+        body: JSON.stringify({
+          name: trimmed,
+          stock_ids: selectedStockIds,
+          report_type: reportType,
+        }),
       });
       setReportName("");
       setSelectedStockIds([]);
       // Insert optimistically as "generating" while the real call runs
-      setReports((prev) => [{ ...created, status: "generating" }, ...prev]);
+      setReports((prev) => [
+        {
+          ...created,
+          report_type: normalizeReportType(created.report_type ?? reportType),
+          status: "generating",
+        },
+        ...prev,
+      ]);
 
       // 2. Generate (blocks until Gemini responds)
       const generated = await fetchBackend<Report>(
@@ -484,7 +527,14 @@ export default function ReportsPage() {
         { method: "POST" }
       );
       setReports((prev) =>
-        prev.map((r) => (r.id === generated.id ? generated : r))
+        prev.map((r) =>
+          r.id === generated.id
+            ? {
+                ...generated,
+                report_type: normalizeReportType(generated.report_type),
+              }
+            : r
+        )
       );
     } catch (err: unknown) {
       setFormError(
@@ -493,7 +543,7 @@ export default function ReportsPage() {
       // Refresh to get accurate statuses
       void fetchReports();
     } finally {
-      setCreating(false);
+      setCreatingType(null);
     }
   }
 
@@ -518,7 +568,14 @@ export default function ReportsPage() {
         method: "POST",
       });
       setReports((prev) =>
-        prev.map((r) => (r.id === updated.id ? updated : r))
+        prev.map((r) =>
+          r.id === updated.id
+            ? {
+                ...updated,
+                report_type: normalizeReportType(updated.report_type),
+              }
+            : r
+        )
       );
     } catch (err) {
       console.error("Regeneration failed:", err);
@@ -560,17 +617,50 @@ export default function ReportsPage() {
             <p className="text-sm text-red-600">{formError}</p>
           )}
 
-          <button
-            type="submit"
-            disabled={
-              creating ||
-              !reportName.trim() ||
-              selectedStockIds.length === 0
-            }
-            className="h-10 rounded-lg bg-accent px-6 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
-          >
-            {creating ? "Generating report…" : "Generate Report"}
-          </button>
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              value="single_stock"
+              disabled={
+                creating ||
+                !reportName.trim() ||
+                selectedStockIds.length === 0
+              }
+              className="h-10 rounded-lg bg-accent px-6 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
+            >
+              {creatingType === "single_stock"
+                ? "Generating single-stock report…"
+                : "Generate Single-Stock Report"}
+            </button>
+            <button
+              type="submit"
+              value="macro"
+              disabled={
+                creating ||
+                !reportName.trim() ||
+                selectedStockIds.length === 0
+              }
+              className="h-10 rounded-lg bg-emerald-600 px-6 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
+            >
+              {creatingType === "macro"
+                ? "Generating macro report…"
+                : "Generate Macro Report"}
+            </button>
+            <button
+              type="submit"
+              value="sector"
+              disabled={
+                creating ||
+                !reportName.trim() ||
+                selectedStockIds.length === 0
+              }
+              className="h-10 rounded-lg bg-amber-600 px-6 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
+            >
+              {creatingType === "sector"
+                ? "Generating sector report…"
+                : "Generate Sector Report"}
+            </button>
+          </div>
         </form>
       </div>
 
