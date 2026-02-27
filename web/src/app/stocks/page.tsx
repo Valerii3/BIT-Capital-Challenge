@@ -1,12 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { fetchBackend } from "@/lib/backend-api";
 
 type EnrichProgress = {
-  step?: "description" | "filtering_markets";
+  step?: "description" | "filtering_markets" | "failed";
   current?: number;
   total?: number;
+  error?: string;
 };
 
 interface Stock {
@@ -29,55 +30,28 @@ export default function StocksPage() {
 
   const fetchStocks = useCallback(async () => {
     setLoading(true);
-    const { data, error } = await supabase
-      .from("stocks")
-      .select("*")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
-
-    if (error) console.error("Failed to fetch stocks:", error);
-    setStocks((data ?? []) as Stock[]);
-    setLoading(false);
+    try {
+      const data = await fetchBackend<Stock[]>("/stocks");
+      setStocks(data ?? []);
+    } catch (err) {
+      console.error("Failed to fetch stocks:", err);
+      setStocks([]);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
   useEffect(() => {
-    fetchStocks();
-  }, [fetchStocks]);
+    void fetchStocks();
 
-  useEffect(() => {
-    const channel = supabase
-      .channel("stocks-changes")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "stocks" },
-        (payload) => {
-          if (payload.eventType === "INSERT") {
-            setStocks((prev) => {
-              const newRow = payload.new as Stock;
-              if (prev.some((s) => s.id === newRow.id)) return prev;
-              return [newRow, ...prev];
-            });
-          } else if (payload.eventType === "UPDATE") {
-            setStocks((prev) =>
-              prev.map((s) =>
-                s.id === (payload.new as Stock).id
-                  ? (payload.new as Stock)
-                  : s
-              )
-            );
-          } else if (payload.eventType === "DELETE") {
-            setStocks((prev) =>
-              prev.filter((s) => s.id !== (payload.old as { id: string }).id)
-            );
-          }
-        }
-      )
-      .subscribe();
+    const intervalId = setInterval(() => {
+      void fetchStocks();
+    }, 5000);
 
     return () => {
-      supabase.removeChannel(channel);
+      clearInterval(intervalId);
     };
-  }, []);
+  }, [fetchStocks]);
 
   async function handleAdd(e: React.FormEvent) {
     e.preventDefault();
@@ -88,27 +62,23 @@ export default function StocksPage() {
     setError(null);
 
     try {
-      const res = await fetch("/api/stocks/enrich", {
+      const newStock = await fetchBackend<Stock>("/stocks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name: trimmed }),
       });
 
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error ?? `Request failed (${res.status})`);
-      }
-
-      const newStock = (await res.json()) as Stock;
       setName("");
       setStocks((prev) => {
         if (prev.some((s) => s.id === newStock.id)) return prev;
         return [newStock, ...prev];
       });
 
-      fetch(`/api/stocks/${newStock.id}/enrich`, {
+      fetchBackend<Stock>(`/stocks/${newStock.id}/enrich`, {
         method: "POST",
-      }).catch((err) => console.error("Enrich trigger failed:", err));
+      }).catch((err) => {
+        console.error("Enrich trigger failed:", err);
+      });
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Something went wrong");
     } finally {
@@ -117,16 +87,23 @@ export default function StocksPage() {
   }
 
   async function handleDelete(id: string) {
-    const { error } = await supabase.from("stocks").delete().eq("id", id);
-    if (error) {
-      console.error("Failed to delete stock:", error);
-      return;
+    try {
+      await fetchBackend<{ status: string }>(`/stocks/${id}`, {
+        method: "DELETE",
+      });
+      setStocks((prev) => prev.filter((s) => s.id !== id));
+    } catch (err) {
+      console.error("Failed to delete stock:", err);
     }
-    setStocks((prev) => prev.filter((s) => s.id !== id));
   }
 
   function getEnrichingLabel(stock: Stock): string | null {
-    if (stock.status !== "enriching") return null;
+    if (stock.status !== "enriching" && stock.status !== "failed") return null;
+
+    if (stock.status === "failed") {
+      return stock.enrich_progress?.error ?? "Enrichment failed";
+    }
+
     const p = stock.enrich_progress;
     if (!p) return "Generating description for stock...";
     if (p.step === "description") return "Generating description for stock...";
@@ -169,13 +146,14 @@ export default function StocksPage() {
       ) : (
         <div className="mt-4 divide-y divide-border rounded-lg border border-border">
           {stocks.map((stock) => {
-            const isEnriching = stock.status === "enriching";
+            const isBusy = stock.status === "enriching";
+            const isFailed = stock.status === "failed";
             const enrichingLabel = getEnrichingLabel(stock);
 
             return (
               <div
                 key={stock.id}
-                className={`flex items-center justify-between gap-4 px-5 py-4 ${isEnriching ? "opacity-75" : ""}`}
+                className={`flex items-center justify-between gap-4 px-5 py-4 ${isBusy ? "opacity-75" : ""}`}
               >
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
@@ -192,7 +170,7 @@ export default function StocksPage() {
                     )}
                   </div>
                   {enrichingLabel ? (
-                    <p className="mt-1 text-sm text-muted/80 italic">
+                    <p className={`mt-1 text-sm italic ${isFailed ? "text-red-600" : "text-muted/80"}`}>
                       {enrichingLabel}
                     </p>
                   ) : (

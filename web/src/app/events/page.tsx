@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useEffect, useState } from "react";
+import { fetchBackend } from "@/lib/backend-api";
 import { EventFilters, type Filters } from "@/components/event-filters";
 import { Pagination } from "@/components/pagination";
 
@@ -38,6 +38,13 @@ interface EventRow {
   }[];
 }
 
+interface EventsResponse {
+  items: EventRow[];
+  total: number;
+  page: number;
+  page_size: number;
+}
+
 const defaultFilters: Filters = {
   search: "",
   active: null,
@@ -55,113 +62,68 @@ export default function EventsPage() {
   const [loading, setLoading] = useState(true);
   const [filters, setFilters] = useState<Filters>(defaultFilters);
 
-  const fetchEvents = useCallback(async () => {
-    setLoading(true);
+  useEffect(() => {
+    let cancelled = false;
 
-    const sortColumn = filters.sort.startsWith("volume") ? "volume" : "updated_at";
-    const sortAsc = filters.sort === "volume_asc";
+    async function run() {
+      setLoading(true);
 
-    let eventIds: string[] | null = null;
-    if (filters.stockIds.length > 0) {
-      const { data: mappings } = await supabase
-        .from("event_stock_mappings")
-        .select("event_id")
-        .in("stock_id", filters.stockIds);
-      eventIds = [...new Set((mappings ?? []).map((m) => m.event_id))];
-      if (eventIds.length === 0) {
+      const params = new URLSearchParams({
+        page: String(page + 1),
+        page_size: String(PAGE_SIZE),
+        sort: filters.sort,
+      });
+
+      if (filters.search.trim()) params.set("search", filters.search.trim());
+      if (filters.active !== null) params.set("active", String(filters.active));
+      if (filters.prefilterPassed !== null) {
+        params.set("prefilter_passed", String(filters.prefilterPassed));
+      }
+      if (filters.impactTypes.length > 0) {
+        params.set("impact_types", filters.impactTypes.join(","));
+      }
+      if (filters.themeLabels.length > 0) {
+        params.set("theme_labels", filters.themeLabels.join(","));
+      }
+      if (filters.stockIds.length > 0) {
+        params.set("stock_ids", filters.stockIds.join(","));
+      }
+
+      try {
+        const data = await fetchBackend<EventsResponse>(`/events?${params.toString()}`);
+        if (cancelled) return;
+        setEvents(data.items ?? []);
+        setTotal(data.total ?? 0);
+      } catch (error) {
+        if (cancelled) return;
+        console.error("Failed to fetch events:", error);
         setEvents([]);
         setTotal(0);
-        setLoading(false);
-        return;
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
       }
     }
 
-    let query = supabase
-      .from("polymarket_events")
-      .select(
-        `*, event_filtering(*), polymarket_markets(id, question, outcomes, outcome_prices, volume_num)`,
-        { count: "exact" }
-      )
-      .order(sortColumn, { ascending: sortAsc })
-      .range(page * PAGE_SIZE, (page + 1) * PAGE_SIZE - 1);
+    void run();
 
-    if (eventIds != null) {
-      query = query.in("id", eventIds);
-    }
-    if (filters.search) {
-      query = query.ilike("title", `%${filters.search}%`);
-    }
-    if (filters.active !== null) {
-      query = query.eq("active", filters.active);
-    }
-    if (filters.prefilterPassed !== null) {
-      query = query.not("event_filtering", "is", null);
-      query = query.eq(
-        "event_filtering.prefilter_passed",
-        filters.prefilterPassed
-      );
-    }
-    if (filters.impactTypes.length > 0) {
-      query = query.in("event_filtering.impact_type", filters.impactTypes);
-    }
-    if (filters.themeLabels.length > 0) {
-      query = query.contains("event_filtering.theme_labels", filters.themeLabels);
-    }
-
-    const { data, count, error } = await query;
-
-    if (error) {
-      console.error("Failed to fetch events:", error);
-    }
-
-    let rows = (data ?? []) as unknown as EventRow[];
-
-    if (filters.prefilterPassed !== null) {
-      rows = rows.filter(
-        (e) => e.event_filtering?.prefilter_passed === filters.prefilterPassed
-      );
-    }
-    if (filters.impactTypes.length > 0) {
-      rows = rows.filter(
-        (e) =>
-          e.event_filtering?.impact_type &&
-          filters.impactTypes.includes(e.event_filtering.impact_type)
-      );
-    }
-    if (filters.themeLabels.length > 0) {
-      rows = rows.filter((e) => {
-        const labels = e.event_filtering?.theme_labels ?? [];
-        return filters.themeLabels.some((l) => labels.includes(l));
-      });
-    }
-
-    if (filters.sort === "score_desc" || filters.sort === "score_asc") {
-      const asc = filters.sort === "score_asc";
-      rows.sort((a, b) => {
-        const sa = a.event_filtering?.relevance_score ?? -1;
-        const sb = b.event_filtering?.relevance_score ?? -1;
-        return asc ? sa - sb : sb - sa;
-      });
-    }
-
-    setEvents(rows);
-    setTotal(count ?? 0);
-    setLoading(false);
+    return () => {
+      cancelled = true;
+    };
   }, [page, filters]);
-
-  useEffect(() => {
-    fetchEvents();
-  }, [fetchEvents]);
-
-  useEffect(() => {
-    setPage(0);
-  }, [filters]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
 
   return (
     <div>
-      <EventFilters filters={filters} onChange={setFilters} />
+      <EventFilters
+        filters={filters}
+        onChange={(next) => {
+          setFilters(next);
+          setPage(0);
+        }}
+      />
 
       {loading ? (
         <p className="py-12 text-center text-muted">Loading events...</p>
@@ -189,7 +151,7 @@ function parseJsonArray(raw: string | null): string[] {
     return [];
   } catch {
     return raw
-      .replace(/[[\]"]/g, "")
+      .replace(/[\[\]"]/g, "")
       .split(",")
       .map((s) => s.trim())
       .filter(Boolean);

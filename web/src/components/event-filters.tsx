@@ -1,7 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { useCallback, useState } from "react";
+import { fetchBackend } from "@/lib/backend-api";
 
 export type SortOption =
   | "recent"
@@ -293,18 +293,15 @@ function StockFilter({
 
   const fetchStocks = useCallback(async () => {
     setLoading(true);
-    const { data } = await supabase
-      .from("stocks")
-      .select("id, name, ticker")
-      .eq("is_active", true)
-      .order("name");
-    setStocks((data ?? []) as Stock[]);
+    try {
+      const data = await fetchBackend<Stock[]>("/stocks");
+      setStocks(data);
+    } catch (error) {
+      console.error("Failed to fetch stocks:", error);
+      setStocks([]);
+    }
     setLoading(false);
   }, []);
-
-  useEffect(() => {
-    fetchStocks();
-  }, [fetchStocks]);
 
   const q = query.trim().toLowerCase();
   const filtered = q
@@ -358,7 +355,12 @@ function StockFilter({
           placeholder="Type to search stocks..."
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onFocus={() => setOpen(true)}
+          onFocus={() => {
+            setOpen(true);
+            if (!loading && stocks.length === 0) {
+              void fetchStocks();
+            }
+          }}
           className="h-9 w-full rounded-lg border border-border bg-white px-3 text-sm outline-none placeholder:text-muted focus:border-accent focus:ring-1 focus:ring-accent"
         />
         {open && (
