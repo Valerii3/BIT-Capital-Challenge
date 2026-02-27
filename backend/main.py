@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -59,6 +59,7 @@ class CreateStockRequest(BaseModel):
 class CreateReportRequest(BaseModel):
     name: str = Field(min_length=1)
     stock_ids: List[str]
+    report_type: Literal["single_stock", "macro", "sector"] = "single_stock"
 
 
 class PipelineRunRequest(BaseModel):
@@ -171,7 +172,12 @@ def get_reports() -> List[Dict[str, Any]]:
 @app.post("/reports")
 def post_report(payload: CreateReportRequest) -> Dict[str, Any]:
     supabase = get_supabase()
-    return create_report(supabase, payload.name.strip(), payload.stock_ids)
+    return create_report(
+        supabase,
+        payload.name.strip(),
+        payload.stock_ids,
+        payload.report_type,
+    )
 
 
 @app.delete("/reports/{report_id}")
