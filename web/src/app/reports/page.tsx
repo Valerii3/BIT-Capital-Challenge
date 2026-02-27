@@ -8,24 +8,33 @@ import { fetchBackend } from "@/lib/backend-api";
 // ---------------------------------------------------------------------------
 
 type ReportStatus = "pending" | "generating" | "ready" | "failed";
-type ReportType = "single_stock" | "macro" | "sector";
+type ReportType = "combined" | "single_stock" | "macro" | "sector";
 
 const REPORT_TYPE_LABELS: Record<ReportType, string> = {
+  combined: "Unified",
   single_stock: "Single-Stock",
   macro: "Macro",
   sector: "Sector",
 };
 
 function normalizeReportType(value: string | null | undefined): ReportType {
+  if (value === "combined") return "combined";
+  if (value === "single_stock") return "single_stock";
   if (value === "macro") return "macro";
   if (value === "sector") return "sector";
-  return "single_stock";
+  return "combined";
 }
 
 interface Report {
   id: string;
   name: string;
   report_type?: ReportType | null;
+  progress?: {
+    phase?: string | null;
+    stage?: string | null;
+    stock?: string | null;
+    event?: string | null;
+  } | null;
   stock_ids: string[];
   event_ids: string[];
   content: string | null;
@@ -80,6 +89,26 @@ function formatDate(iso: string) {
     hour: "2-digit",
     minute: "2-digit",
   });
+}
+
+function clipText(value: string, max = 90): string {
+  return value.length > max ? `${value.slice(0, max - 3)}...` : value;
+}
+
+function generationMessage(report: Report): string {
+  const reportType = normalizeReportType(report.report_type);
+  const base = `Analysing markets and generating ${REPORT_TYPE_LABELS[reportType].toLowerCase()} report`;
+  const p = report.progress;
+  if (!p) return `${base}…`;
+
+  const parts: string[] = [];
+  if (p.phase) parts.push(clipText(p.phase));
+  if (p.stage) parts.push(clipText(p.stage.replaceAll("_", " ")));
+  if (p.stock) parts.push(clipText(p.stock));
+  if (p.event) parts.push(clipText(p.event));
+
+  if (parts.length === 0) return `${base}…`;
+  return `${base}: ${parts.join(" · ")}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -384,7 +413,7 @@ function ReportCard({
       {/* Generating spinner */}
       {isGenerating && (
         <p className="mt-3 text-sm italic text-muted">
-          Analysing markets and generating {REPORT_TYPE_LABELS[reportType].toLowerCase()} report…
+          {generationMessage(report)}
         </p>
       )}
 
@@ -486,14 +515,7 @@ export default function ReportsPage() {
     e.preventDefault();
     const trimmed = reportName.trim();
     if (!trimmed || selectedStockIds.length === 0) return;
-    const native = e.nativeEvent as SubmitEvent;
-    const submitter = native.submitter as HTMLButtonElement | null;
-    const reportType: ReportType =
-      submitter?.value === "macro"
-        ? "macro"
-        : submitter?.value === "sector"
-          ? "sector"
-          : "single_stock";
+    const reportType: ReportType = "combined";
 
     setCreatingType(reportType);
     setFormError(null);
@@ -620,7 +642,6 @@ export default function ReportsPage() {
           <div className="flex flex-wrap gap-2">
             <button
               type="submit"
-              value="single_stock"
               disabled={
                 creating ||
                 !reportName.trim() ||
@@ -628,37 +649,9 @@ export default function ReportsPage() {
               }
               className="h-10 rounded-lg bg-accent px-6 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:opacity-50"
             >
-              {creatingType === "single_stock"
-                ? "Generating single-stock report…"
-                : "Generate Single-Stock Report"}
-            </button>
-            <button
-              type="submit"
-              value="macro"
-              disabled={
-                creating ||
-                !reportName.trim() ||
-                selectedStockIds.length === 0
-              }
-              className="h-10 rounded-lg bg-emerald-600 px-6 text-sm font-medium text-white transition-colors hover:bg-emerald-700 disabled:opacity-50"
-            >
-              {creatingType === "macro"
-                ? "Generating macro report…"
-                : "Generate Macro Report"}
-            </button>
-            <button
-              type="submit"
-              value="sector"
-              disabled={
-                creating ||
-                !reportName.trim() ||
-                selectedStockIds.length === 0
-              }
-              className="h-10 rounded-lg bg-amber-600 px-6 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
-            >
-              {creatingType === "sector"
-                ? "Generating sector report…"
-                : "Generate Sector Report"}
+              {creatingType === "combined"
+                ? "Generating unified report…"
+                : "Generate Unified Report"}
             </button>
           </div>
         </form>
