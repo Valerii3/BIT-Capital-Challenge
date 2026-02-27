@@ -6,6 +6,7 @@ import logging
 import math
 import os
 import random
+import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
@@ -15,8 +16,8 @@ from supabase import Client
 
 logger = logging.getLogger(__name__)
 
-REPORT_TYPES = {"single_stock", "macro", "sector"}
-DEFAULT_REPORT_TYPE = "single_stock"
+REPORT_TYPES = {"single_stock", "macro", "sector", "combined"}
+DEFAULT_REPORT_TYPE = "combined"
 
 # ---------------------------------------------------------------------------
 # Single-stock report prompt
@@ -346,6 +347,59 @@ def _channel_quality_score(reasonings: List[str]) -> float:
     return (good / total) if total else 0.0
 
 
+def _title_cluster_key(title: str) -> str:
+    raw = (title or "").lower()
+    # Remove date/deadline suffixes (e.g. "by April 30", "in February") while
+    # avoiding generic "by X" phrases that change semantic meaning.
+    base = re.sub(
+        r"\b(?:by|in)\s+(?:jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?|q[1-4]|\d{1,2}(?:st|nd|rd|th)?(?:,\s*\d{4})?|\d{4})[^?]*\??$",
+        "",
+        raw,
+        flags=re.IGNORECASE,
+    )
+    base = re.sub(r"[^a-z0-9]+", " ", base).strip()
+    return base or re.sub(r"[^a-z0-9]+", " ", raw).strip() or raw
+
+
+def _candidate_strength(candidate: Dict[str, Any]) -> float:
+    score = _safe_float(candidate.get("score"))
+    if score > 0:
+        return score
+    event_volume = _safe_float(candidate.get("event_volume"))
+    if event_volume > 0:
+        return event_volume
+    markets = candidate.get("markets") or []
+    if isinstance(markets, list):
+        return sum(_safe_float(m.get("volume_num")) for m in markets if isinstance(m, dict))
+    return 0.0
+
+
+def _dedupe_candidates_by_title(candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    best_by_key: Dict[str, Dict[str, Any]] = {}
+    for candidate in candidates:
+        title = str(candidate.get("title") or "")
+        key = _title_cluster_key(title)
+        current = best_by_key.get(key)
+        if current is None or _candidate_strength(candidate) > _candidate_strength(current):
+            best_by_key[key] = candidate
+    deduped = list(best_by_key.values())
+    deduped.sort(key=_candidate_strength, reverse=True)
+    return deduped
+
+
+async def _set_report_progress(
+    supabase: Client,
+    report_id: str,
+    progress: Optional[Dict[str, Any]],
+) -> None:
+    await asyncio.to_thread(
+        lambda: supabase.table("reports")
+        .update({"progress": progress})
+        .eq("id", report_id)
+        .execute()
+    )
+
+
 async def _generate_text(
     *,
     api_key: str,
@@ -492,6 +546,16 @@ async def _generate_single_stock_report(
         if not stock:
             logger.warning("Stock %s not found, skipping", stock_id)
             continue
+        stock_label = f"{stock.get('name')} ({stock.get('ticker') or 'N/A'})"
+        await _set_report_progress(
+            supabase,
+            report_id,
+            {
+                "phase": "single_stock",
+                "stage": "collecting_candidates",
+                "stock": stock_label,
+            },
+        )
 
         mappings_resp = await asyncio.to_thread(
             lambda sid=stock_id: supabase.table("event_stock_mappings")
@@ -532,6 +596,16 @@ async def _generate_single_stock_report(
 
         events_with_markets: List[Dict[str, Any]] = []
         for event in single_stock_events:
+            await _set_report_progress(
+                supabase,
+                report_id,
+                {
+                    "phase": "single_stock",
+                    "stage": "collecting_markets",
+                    "stock": stock_label,
+                    "event": str(event.get("title") or ""),
+                },
+            )
             markets_resp = await asyncio.to_thread(
                 lambda eid=event["id"]: supabase.table("polymarket_markets")
                 .select("question, outcomes, outcome_prices, volume_num")
@@ -541,10 +615,26 @@ async def _generate_single_stock_report(
             )
             events_with_markets.append({**event, "markets": markets_resp.data or []})
 
-        all_event_ids.extend(e["id"] for e in events_with_markets)
-        stocks_data.append({"stock": stock, "events": events_with_markets})
+        deduped_events = _dedupe_candidates_by_title(events_with_markets)
+        all_event_ids.extend(e["id"] for e in deduped_events)
+        stocks_data.append({"stock": stock, "events": deduped_events})
+        if len(events_with_markets) != len(deduped_events):
+            logger.info(
+                "Single-stock dedupe for %s: %d -> %d events",
+                stock_label,
+                len(events_with_markets),
+                len(deduped_events),
+            )
 
     prompt = _build_single_stock_prompt(stocks_data, report_date)
+    await _set_report_progress(
+        supabase,
+        report_id,
+        {
+            "phase": "single_stock",
+            "stage": "writing_section",
+        },
+    )
     logger.info(
         "Generating single-stock report %s for %d stocks, prompt length %d chars",
         report_id,
@@ -860,6 +950,16 @@ async def _generate_sector_report(
         if not stock:
             logger.warning("Stock %s not found, skipping", stock_id)
             continue
+        stock_label = f"{stock.get('name')} ({stock.get('ticker') or 'N/A'})"
+        await _set_report_progress(
+            supabase,
+            report_id,
+            {
+                "phase": "sector",
+                "stage": "collecting_candidates",
+                "stock": stock_label,
+            },
+        )
 
         mappings_resp = await asyncio.to_thread(
             lambda sid=stock_id: supabase.table("event_stock_mappings")
@@ -989,12 +1089,23 @@ async def _generate_sector_report(
             )
 
         scored_candidates.sort(key=lambda row: row["score"], reverse=True)
-        pre_shortlist = [c for c in scored_candidates if c["score"] >= 0.42][:6]
-        if not pre_shortlist and scored_candidates and scored_candidates[0]["score"] >= 0.60:
-            pre_shortlist = [scored_candidates[0]]
+        deduped_candidates = _dedupe_candidates_by_title(scored_candidates)
+        pre_shortlist = [c for c in deduped_candidates if c["score"] >= 0.42][:6]
+        if not pre_shortlist and deduped_candidates and deduped_candidates[0]["score"] >= 0.60:
+            pre_shortlist = [deduped_candidates[0]]
 
         verified: List[Dict[str, Any]] = []
         for candidate in pre_shortlist:
+            await _set_report_progress(
+                supabase,
+                report_id,
+                {
+                    "phase": "sector",
+                    "stage": "verifying_event",
+                    "stock": stock_label,
+                    "event": str(candidate.get("title") or ""),
+                },
+            )
             include, verifier_reason = await _verify_sector_candidate(
                 api_key=api_key,
                 stock=stock,
@@ -1007,10 +1118,11 @@ async def _generate_sector_report(
 
         selected = verified[:3]
         logger.info(
-            "Sector stock %s (%s): raw=%d, pre_shortlist=%d, verifier_pass=%d, selected=%d",
+            "Sector stock %s (%s): raw=%d, deduped=%d, pre_shortlist=%d, verifier_pass=%d, selected=%d",
             stock_id,
             stock.get("ticker") or stock.get("name"),
             len(scored_candidates),
+            len(deduped_candidates),
             len(pre_shortlist),
             len(verified),
             len(selected),
@@ -1028,6 +1140,14 @@ async def _generate_sector_report(
         )
 
     prompt = _build_sector_prompt(stocks_data, report_date)
+    await _set_report_progress(
+        supabase,
+        report_id,
+        {
+            "phase": "sector",
+            "stage": "writing_section",
+        },
+    )
     logger.info(
         "Generating sector report %s for %d stocks, prompt length %d chars (selected_events=%d)",
         report_id,
@@ -1246,6 +1366,7 @@ def _render_macro_content(
 async def _generate_macro_report(
     supabase: Client,
     report: Dict[str, Any],
+    report_id: str,
     report_date: str,
     api_key: str,
 ) -> tuple[str, List[str]]:
@@ -1403,19 +1524,36 @@ async def _generate_macro_report(
         return _fallback_macro_content(report_date=report_date, candidates=[])
 
     candidates.sort(key=lambda row: row["score"], reverse=True)
-    shortlist = candidates[: min(10, len(candidates))]
+    deduped_candidates = _dedupe_candidates_by_title(candidates)
+    shortlist = deduped_candidates[: min(10, len(deduped_candidates))]
+    if len(candidates) != len(deduped_candidates):
+        logger.info(
+            "Macro dedupe for report %s: %d -> %d events",
+            report_id,
+            len(candidates),
+            len(deduped_candidates),
+        )
 
     prompt = _build_macro_prompt(
         report_date=report_date,
         stocks=stocks,
         candidates=shortlist,
     )
+    await _set_report_progress(
+        supabase,
+        report_id,
+        {
+            "phase": "macro",
+            "stage": "writing_section",
+            "event": str(shortlist[0].get("title")) if shortlist else None,
+        },
+    )
 
     logger.info(
         "Generating macro report %s with %d shortlisted events (from %d candidates)",
-        report.get("id"),
+        report_id,
         len(shortlist),
-        len(candidates),
+        len(deduped_candidates),
     )
 
     raw_text = await _generate_text(
@@ -1446,6 +1584,89 @@ async def _generate_macro_report(
         executive_summary=summary,
     )
     return content, selected_ids
+
+
+def _strip_first_h1(content: str) -> str:
+    lines = content.splitlines()
+    if lines and lines[0].startswith("# "):
+        lines = lines[1:]
+        if lines and not lines[0].strip():
+            lines = lines[1:]
+    return "\n".join(lines).strip()
+
+
+async def _generate_combined_report(
+    supabase: Client,
+    report: Dict[str, Any],
+    report_id: str,
+    report_date: str,
+    api_key: str,
+) -> tuple[str, List[str]]:
+    logger.info("Generating combined report %s: macro section", report_id)
+    await _set_report_progress(
+        supabase,
+        report_id,
+        {"phase": "combined", "stage": "starting_macro_section"},
+    )
+    macro_content, macro_event_ids = await _generate_macro_report(
+        supabase=supabase,
+        report=report,
+        report_id=report_id,
+        report_date=report_date,
+        api_key=api_key,
+    )
+
+    logger.info("Generating combined report %s: sector section", report_id)
+    await _set_report_progress(
+        supabase,
+        report_id,
+        {"phase": "combined", "stage": "starting_sector_section"},
+    )
+    sector_content, sector_event_ids = await _generate_sector_report(
+        supabase=supabase,
+        report=report,
+        report_id=report_id,
+        report_date=report_date,
+        api_key=api_key,
+    )
+
+    logger.info("Generating combined report %s: stock-specific section", report_id)
+    await _set_report_progress(
+        supabase,
+        report_id,
+        {"phase": "combined", "stage": "starting_stock_specific_section"},
+    )
+    stock_content, stock_event_ids = await _generate_single_stock_report(
+        supabase=supabase,
+        report=report,
+        report_id=report_id,
+        report_date=report_date,
+        api_key=api_key,
+    )
+
+    combined = "\n\n".join(
+        [
+            f"# Unified Market Intelligence Brief — {report_date}",
+            "## Macro",
+            _strip_first_h1(macro_content) or "No macro section generated.",
+            "## Sector",
+            _strip_first_h1(sector_content) or "No sector section generated.",
+            "## Stock-Specific",
+            _strip_first_h1(stock_content) or "No stock-specific section generated.",
+        ]
+    )
+
+    all_ids = macro_event_ids + sector_event_ids + stock_event_ids
+    unique_event_ids = list(dict.fromkeys([str(eid) for eid in all_ids if eid]))
+
+    logger.info(
+        "Combined report %s sections done: macro=%d events, sector=%d events, stock=%d events",
+        report_id,
+        len(macro_event_ids),
+        len(sector_event_ids),
+        len(stock_event_ids),
+    )
+    return combined, unique_event_ids
 
 
 # ---------------------------------------------------------------------------
@@ -1480,16 +1701,33 @@ async def generate_report_content(supabase: Client, report_id: str) -> Dict[str,
         report_type = _normalize_report_type(report.get("report_type"))
         report_date = datetime.now(timezone.utc).strftime("%B %d, %Y")
         logger.info("Starting generation for report %s (type=%s)", report_id, report_type)
+        await _set_report_progress(
+            supabase,
+            report_id,
+            {
+                "phase": report_type,
+                "stage": "initializing",
+            },
+        )
 
         if report_type == "macro":
             content, event_ids = await _generate_macro_report(
                 supabase=supabase,
                 report=report,
+                report_id=report_id,
                 report_date=report_date,
                 api_key=api_key,
             )
         elif report_type == "sector":
             content, event_ids = await _generate_sector_report(
+                supabase=supabase,
+                report=report,
+                report_id=report_id,
+                report_date=report_date,
+                api_key=api_key,
+            )
+        elif report_type == "combined":
+            content, event_ids = await _generate_combined_report(
                 supabase=supabase,
                 report=report,
                 report_id=report_id,
@@ -1516,6 +1754,7 @@ async def generate_report_content(supabase: Client, report_id: str) -> Dict[str,
                     "event_ids": event_ids,
                     "updated_at": now_iso,
                     "report_type": report_type,
+                    "progress": None,
                 }
             )
             .eq("id", report_id)
@@ -1547,6 +1786,7 @@ async def generate_report_content(supabase: Client, report_id: str) -> Dict[str,
                     "status": "failed",
                     "error": str(err)[:500],
                     "updated_at": now_iso,
+                    "progress": None,
                 }
             )
             .eq("id", report_id)

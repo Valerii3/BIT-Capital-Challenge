@@ -59,7 +59,7 @@ class CreateStockRequest(BaseModel):
 class CreateReportRequest(BaseModel):
     name: str = Field(min_length=1)
     stock_ids: List[str]
-    report_type: Literal["single_stock", "macro", "sector"] = "single_stock"
+    report_type: Literal["combined", "single_stock", "macro", "sector"] = "combined"
 
 
 class PipelineRunRequest(BaseModel):
