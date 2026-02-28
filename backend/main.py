@@ -30,14 +30,33 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
 
-def test_job():
-    logger.info("🔔 Hello from cron! It works!")
+def run_pipeline_job():
+    logger.info("Scheduler: starting pipeline run")
+    try:
+        run_ingest()
+        logger.info("Scheduler: ingest done")
+    except Exception as e:
+        logger.error("Scheduler: ingest failed: %s", e)
+        return
+    try:
+        run_filter()
+        logger.info("Scheduler: filter done")
+    except Exception as e:
+        logger.error("Scheduler: filter failed: %s", e)
+        return
+    try:
+        run_mapping()
+        logger.info("Scheduler: mapping done")
+    except Exception as e:
+        logger.error("Scheduler: mapping failed: %s", e)
+        return
+    logger.info("Scheduler: pipeline run complete")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler.add_job(test_job, "interval", minutes=10)
+    scheduler.add_job(run_pipeline_job, "interval", hours=6)
     scheduler.start()
-    logger.info("Scheduler started — test job every 30s")
+    logger.info("Scheduler started — pipeline every 6 hours")
     yield
     scheduler.shutdown()
 
