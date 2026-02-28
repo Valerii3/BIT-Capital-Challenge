@@ -10,7 +10,7 @@ Try it out: [https://bit-capital-challenge.vercel.app/events](https://bit-capita
 
 - `backend/` FastAPI API and report generation orchestration.
 - `web/` Next.js frontend (events, stocks, reports UI).
-- `scripts/` data pipeline scripts (ingest/filter/mapping helpers).
+- `backend/scripts/` data pipeline scripts (ingest/filter/mapping helpers).
 - `supabase/migrations/` database schema migrations.
 
 ## How It Works

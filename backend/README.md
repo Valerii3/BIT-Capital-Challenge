@@ -34,4 +34,4 @@ uvicorn main:app --reload --host 0.0.0.0 --port 8000
 python -m run_pipeline
 ```
 
-`/pipeline/run` and `run_pipeline` call scripts from `scripts/`. Keep Railway root directory at repo root if you need those scripts available in the container.
+`/pipeline/run` and `run_pipeline` call scripts from `backend/scripts/` (included in the backend image).

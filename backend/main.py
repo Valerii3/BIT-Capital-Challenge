@@ -25,10 +25,19 @@ from services.stocks import create_stock, delete_stock, get_stock, list_stocks
 
 import logging
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
 logger = logging.getLogger(__name__)
 scheduler = AsyncIOScheduler()
+EUROPE_TZ = ZoneInfo("Europe/Berlin")
 
 def run_pipeline_job():
     logger.info("Scheduler: starting pipeline run")
@@ -54,9 +63,12 @@ def run_pipeline_job():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    scheduler.add_job(run_pipeline_job, "interval", hours=6)
+    scheduler.add_job(
+        run_pipeline_job,
+        CronTrigger(hour=12, minute=0, timezone=EUROPE_TZ),
+    )
     scheduler.start()
-    logger.info("Scheduler started — pipeline every 6 hours")
+    logger.info("Scheduler started — pipeline daily at 12:00 Europe/Berlin")
     yield
     scheduler.shutdown()
 

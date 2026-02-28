@@ -4,23 +4,16 @@ from pathlib import Path
 from typing import Optional
 
 
-def _resolve_script(script_name: str) -> Path:
-    here = Path(__file__).resolve()
-    candidates = [
-        here.parents[2] / "scripts" / script_name,
-        here.parents[1] / "scripts" / script_name,
-        here.parents[3] / "scripts" / script_name,
-    ]
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate
-    raise RuntimeError(
-        f"Could not find scripts/{script_name}. Deploy with repo root context or include scripts directory."
-    )
+def _script_path(script_name: str) -> Path:
+    """Resolve backend/scripts/<script_name> relative to this file."""
+    script = Path(__file__).resolve().parent.parent / "scripts" / script_name
+    if not script.exists():
+        raise RuntimeError(f"Could not find scripts/{script_name}")
+    return script
 
 
 def run_mapping(stock_id: Optional[str] = None) -> None:
-    script = _resolve_script("assign_event_stocks.py")
+    script = _script_path("assign_event_stocks.py")
 
     cmd = [sys.executable, str(script)]
     if stock_id:
