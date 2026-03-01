@@ -63,7 +63,7 @@ def list_events(
     base_query = (
         supabase.table("polymarket_events")
         .select(
-            "id,title,description,active,volume,updated_at,"
+            "id,title,description,active,volume,updated_at,first_seen_at,"
             "event_filtering(prefilter_passed,relevant,relevance_score,impact_type,theme_labels),"
             "polymarket_markets(id,question,outcomes,outcome_prices,volume_num)",
             count="exact",

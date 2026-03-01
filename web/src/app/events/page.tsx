@@ -22,6 +22,7 @@ interface EventRow {
   active: boolean;
   volume: number | null;
   updated_at: string;
+  first_seen_at: string;
   event_filtering: {
     prefilter_passed: boolean;
     relevant: boolean | null;
@@ -195,6 +196,15 @@ function EventCard({ event }: { event: EventRow }) {
               </span>
             </span>
           )}
+          <span className="text-xs text-muted">
+            First seen:{" "}
+            {new Date(event.first_seen_at).toLocaleDateString("en-US", {
+              month: "short",
+              day: "numeric",
+              hour: "2-digit",
+              minute: "2-digit",
+            })}
+          </span>
           <span className="text-xs text-muted">
             Last updated:{" "}
             {new Date(event.updated_at).toLocaleDateString("en-US", {

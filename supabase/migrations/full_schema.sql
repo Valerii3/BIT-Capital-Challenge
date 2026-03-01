@@ -38,6 +38,7 @@ CREATE TABLE public.polymarket_events (
   volume numeric,
   updated_at timestamp with time zone NOT NULL DEFAULT now(),
   tags ARRAY,
+  first_seen_at timestamp with time zone NOT NULL,
   CONSTRAINT polymarket_events_pkey PRIMARY KEY (id)
 );
 CREATE TABLE public.polymarket_markets (

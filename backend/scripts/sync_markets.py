@@ -56,6 +56,7 @@ def event_row(ev: dict[str, Any], run_ts: str) -> dict[str, Any]:
         "volume": ev.get("volume"),
         "tags": extract_tags(ev),
         "updated_at": run_ts,
+        "first_seen_at": run_ts,
     }
 
 
